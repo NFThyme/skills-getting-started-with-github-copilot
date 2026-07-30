@@ -1,0 +1,43 @@
+name: Fetch public investors temp
+on:
+  pull_request:
+    paths:
+      - 'trigger-investor-fetch-temp.txt'
+permissions:
+  contents: read
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download dataset
+        run: |
+          python - <<'PY'
+          import csv,json,urllib.parse,urllib.request,time,traceback
+          dataset='IqraSAYEDhassan/startup-investor-and-accelerator-dataset'
+          rows=[]; log=[]
+          try:
+            for offset in range(0,2600,100):
+              q=urllib.parse.urlencode({'dataset':dataset,'config':'default','split':'train','offset':offset,'length':100})
+              req=urllib.request.Request('https://datasets-server.huggingface.co/rows?'+q,headers={'User-Agent':'Mozilla/5.0'})
+              with urllib.request.urlopen(req,timeout=60) as r: data=json.load(r)
+              batch=[x['row'] for x in data.get('rows',[])]
+              log.append(f'{offset}: {len(batch)}')
+              if not batch: break
+              rows.extend(batch); time.sleep(.2)
+          except Exception: log.append(traceback.format_exc())
+          fields=['Investor Name','Fund Type','Fund Stage','Website','Fund Focus (Sectors)']
+          with open('public-investor-dataset-2026.csv','w',newline='',encoding='utf-8') as f:
+            w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
+            for row in rows: w.writerow({k:row.get(k,'') for k in fields})
+          open('fetch-log.txt','w').write('\n'.join(log)+f'\nrows={len(rows)}\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: public-investor-dataset-2026
+          path: |
+            public-investor-dataset-2026.csv
+            fetch-log.txt
