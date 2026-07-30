@@ -13,31 +13,71 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Download dataset
+      - name: Download datasets
         run: |
           python - <<'PY'
-          import csv,json,urllib.parse,urllib.request,time,traceback
+          import csv,json,urllib.parse,urllib.request,time,traceback,collections,io
+          log=[]
+          # Current curated dataset.
           dataset='IqraSAYEDhassan/startup-investor-and-accelerator-dataset'
-          rows=[]; log=[]
+          rows=[]
           try:
             for offset in range(0,2600,100):
               q=urllib.parse.urlencode({'dataset':dataset,'config':'default','split':'train','offset':offset,'length':100})
               req=urllib.request.Request('https://datasets-server.huggingface.co/rows?'+q,headers={'User-Agent':'Mozilla/5.0'})
               with urllib.request.urlopen(req,timeout=60) as r: data=json.load(r)
               batch=[x['row'] for x in data.get('rows',[])]
-              log.append(f'{offset}: {len(batch)}')
+              log.append(f'current {offset}: {len(batch)}')
               if not batch: break
-              rows.extend(batch); time.sleep(.2)
+              rows.extend(batch); time.sleep(.1)
           except Exception: log.append(traceback.format_exc())
           fields=['Investor Name','Fund Type','Fund Stage','Website','Fund Focus (Sectors)']
           with open('public-investor-dataset-2026.csv','w',newline='',encoding='utf-8') as f:
             w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
             for row in rows: w.writerow({k:row.get(k,'') for k in fields})
-          open('fetch-log.txt','w').write('\n'.join(log)+f'\nrows={len(rows)}\n')
+          # Historical Crunchbase investment export, aggregated to unique investors.
+          hist_url='https://raw.githubusercontent.com/datahoarder/crunchbase-october-2013/master/crunchbase-investments.csv'
+          req=urllib.request.Request(hist_url,headers={'User-Agent':'Mozilla/5.0'})
+          with urllib.request.urlopen(req,timeout=180) as r: raw=r.read()
+          text=raw.decode('latin-1')
+          reader=csv.DictReader(io.StringIO(text))
+          agg={}
+          for rec in reader:
+            name=(rec.get('investor_name') or '').strip()
+            if not name: continue
+            key=name.casefold()
+            a=agg.setdefault(key,{
+              'Investor Name':name,'Investor Permalink':(rec.get('investor_permalink') or '').strip(),
+              'Investor Country':(rec.get('investor_country_code') or '').strip(),
+              'Investor Region':(rec.get('investor_region') or '').strip(),
+              'Investor City':(rec.get('investor_city') or '').strip(),
+              'Investment Count':0,'First Investment Date':'','Last Investment Date':'',
+              'Funding Round Types':set(),'Example Portfolio Companies':[]})
+            a['Investment Count']+=1
+            date=(rec.get('funded_at') or '').strip()
+            if date:
+              if not a['First Investment Date'] or date<a['First Investment Date']: a['First Investment Date']=date
+              if not a['Last Investment Date'] or date>a['Last Investment Date']: a['Last Investment Date']=date
+            rt=(rec.get('funding_round_type') or '').strip()
+            if rt: a['Funding Round Types'].add(rt)
+            company=(rec.get('company_name') or '').strip()
+            if company and company not in a['Example Portfolio Companies'] and len(a['Example Portfolio Companies'])<8:
+              a['Example Portfolio Companies'].append(company)
+          hist_fields=['Investor Name','Investor Permalink','Investor Country','Investor Region','Investor City','Investment Count','First Investment Date','Last Investment Date','Funding Round Types','Example Portfolio Companies']
+          with open('historical-crunchbase-investors-2013.csv','w',newline='',encoding='utf-8') as f:
+            w=csv.DictWriter(f,fieldnames=hist_fields); w.writeheader()
+            for key in sorted(agg):
+              a=agg[key].copy()
+              a['Funding Round Types']='; '.join(sorted(a['Funding Round Types']))
+              a['Example Portfolio Companies']='; '.join(a['Example Portfolio Companies'])
+              w.writerow(a)
+          log.append(f'current_rows={len(rows)} historical_unique_investors={len(agg)} historical_bytes={len(raw)}')
+          open('fetch-log.txt','w').write('\n'.join(log)+'\n')
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: public-investor-dataset-2026
+          name: public-investor-datasets-expanded
           path: |
             public-investor-dataset-2026.csv
+            historical-crunchbase-investors-2013.csv
             fetch-log.txt
