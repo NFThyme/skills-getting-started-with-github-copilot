@@ -16,9 +16,8 @@ jobs:
       - name: Download datasets
         run: |
           python - <<'PY'
-          import csv,json,urllib.parse,urllib.request,time,traceback,collections,io
+          import csv,json,urllib.parse,urllib.request,time,traceback,io
           log=[]
-          # Current curated dataset.
           dataset='IqraSAYEDhassan/startup-investor-and-accelerator-dataset'
           rows=[]
           try:
@@ -35,14 +34,20 @@ jobs:
           with open('public-investor-dataset-2026.csv','w',newline='',encoding='utf-8') as f:
             w=csv.DictWriter(f,fieldnames=fields); w.writeheader()
             for row in rows: w.writerow({k:row.get(k,'') for k in fields})
-          # Historical Crunchbase investment export, aggregated to unique investors.
           hist_url='https://raw.githubusercontent.com/datahoarder/crunchbase-october-2013/master/crunchbase-investments.csv'
           req=urllib.request.Request(hist_url,headers={'User-Agent':'Mozilla/5.0'})
           with urllib.request.urlopen(req,timeout=180) as r: raw=r.read()
-          text=raw.decode('latin-1')
-          reader=csv.DictReader(io.StringIO(text))
-          agg={}
-          for rec in reader:
+          text=raw.decode('latin-1').replace('\r\n','\n').replace('\r','\n')
+          reader=csv.DictReader(io.StringIO(text,newline=''))
+          agg={}; skipped=0
+          while True:
+            try:
+              rec=next(reader)
+            except StopIteration:
+              break
+            except csv.Error:
+              skipped+=1
+              continue
             name=(rec.get('investor_name') or '').strip()
             if not name: continue
             key=name.casefold()
@@ -71,7 +76,7 @@ jobs:
               a['Funding Round Types']='; '.join(sorted(a['Funding Round Types']))
               a['Example Portfolio Companies']='; '.join(a['Example Portfolio Companies'])
               w.writerow(a)
-          log.append(f'current_rows={len(rows)} historical_unique_investors={len(agg)} historical_bytes={len(raw)}')
+          log.append(f'current_rows={len(rows)} historical_unique_investors={len(agg)} historical_bytes={len(raw)} malformed_rows_skipped={skipped}')
           open('fetch-log.txt','w').write('\n'.join(log)+'\n')
           PY
       - uses: actions/upload-artifact@v4
